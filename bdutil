@@ -427,6 +427,80 @@ function run_gcutil_cmd() {
   return ${exitcode}
 }
 
+function get_gccompute_cmd() {
+  local cmd_args=$@
+  local gcutil_flags=()
+
+  gcutil_flags+=("--project ${PROJECT}")
+  gcutil_flags+=("--zone ${GCE_ZONE}")
+
+  if (( ${DEBUG_MODE} )); then
+    gcutil_flags+=("--dump-request-response")
+    gcutil_flags+=("--log-level=DEBUG")
+  fi
+
+  # Only add the --permit_root_ssh flag if running as root.
+  if [[ ${EUID} -eq 0 ]]; then
+    gcutil_flags+=('--permit-root_ssh')
+  fi
+
+  # Force Pseudo tty allocation to bypass CentOS's sudoers defaults
+  if [[ "${gcutil_cmd}" == ssh ]] && (( ${FORCE_TTY_ALLOCATION} )); then
+    gcutil_flags+=('--ssh-arg=-tt')
+  fi
+
+  if [[ "${gcutil_cmd}" == ssh ]]; then
+    # Ping the server every minute and allow two keepalive messages to be in
+    # flight at once.
+    gcutil_flags+=('--ssh-arg=-o')
+    gcutil_flags+=('--ssh-arg=ServerAliveInterval=60')
+    gcutil_flags+=('--ssh-arg=-o')
+    gcutil_flags+=('--ssh-arg=ServerAliveCountMax=3')
+  fi
+
+  echo gcloud compute ${cmd_args} ${gcutil_flags[@]}
+}
+
+# The gcutil command with global flags and some common command flags to use for
+# all GCE operations.
+INITIAL_SSH_SUCCEEDED=1
+function run_gccompute_cmd() {
+  local gcutil_cmd=$1
+  local full_cmd=$(get_gccompute_cmd ${@})
+  if (( ${VERBOSE_MODE} )); then
+    loginfo "Running ${full_cmd}"
+    ${full_cmd} \
+        2> >(tee -a ${GCUTIL_STDERR_FILE} 1>&2) \
+        1> >(tee -a ${GCUTIL_STDOUT_FILE}) \
+        < /dev/null
+  else
+    echo -n "."
+    ${full_cmd} 2>>${GCUTIL_STDERR_FILE} 1>>${GCUTIL_STDOUT_FILE} < /dev/null
+  fi
+
+  local exitcode=$?
+  if (( ${exitcode} != 0 )); then
+    if [[ "${@:3}" == "exit 0" ]]; then
+      # This is just an sshability check; only log it to debug.
+      logdebug "Exited ${exitcode} : ${full_cmd}"
+    else
+      logerror "Exited ${exitcode} : ${full_cmd}"
+    fi
+    loginfo "Exited ${exitcode} : ${full_cmd}" >> ${VM_DEBUG_FILE}
+    if [[ "${gcutil_cmd}" == 'ssh' ]] && (( ${INITIAL_SSH_SUCCEEDED} )); then
+      local target_node=$2
+      local fetch_logs_cmd=$(
+          get_gcutil_cmd ssh ${target_node} tail -vn 30 "*.stderr")
+      logerror "Fetching on-VM logs with cmd: ${fetch_logs_cmd}"
+      ${fetch_logs_cmd} < /dev/null \
+          | sed "s/^/${target_node}:\t/" >> ${VM_DEBUG_FILE}
+    fi
+  else
+    echo -n '.'
+  fi
+  return ${exitcode}
+}
+
 # Checks for obvious issues like missing "required" fields.
 function run_sanity_checks() {
   trap handle_error ERR
@@ -710,35 +784,37 @@ function create_cluster() {
         loginfo 'Done. Invoking next batch...'
       fi
       if (( ${USE_ATTACHED_PDS} )); then
-        local optional_disk_arg="--disk=${WORKER_ATTACHED_PDS[${i}]},mode=rw"
+        local optional_disk_arg="--disk name=${WORKER_ATTACHED_PDS[${i}]} mode=rw"
       fi
-      run_gcutil_cmd \
-          addinstance \
-          --machine_type=${GCE_MACHINE_TYPE} \
-          --service_account=default \
-          --image=${GCE_IMAGE} \
-          --network=${GCE_NETWORK} \
-          --service_account_scopes=${GCE_SERVICE_ACCOUNT_SCOPES} \
-          --persistent_boot_disk \
-          --external_ip_address=ephemeral \
-          ${optional_disk_arg} ${WORKERS[${i}]} &
+      if (( ${LOCAL_SSD_COUNT} )); then
+        local local_ssd_arg="--local-ssd-count ${LOCAL_SSD_COUNT} --local-ssd-interface ${LOCAL_SSD_INTERFACE}"
+      fi
+      run_gccompute_cmd \
+          "instances create" ${WORKERS[${i}]} \
+          --machine-type ${GCE_MACHINE_TYPE} \
+          --image ${GCE_IMAGE} \
+          --no-restart-on-failure \
+          --maintenance-policy "TERMINATE" \
+          --network ${GCE_NETWORK} \
+          --scopes ${GCE_SERVICE_ACCOUNT_SCOPES} \
+          ${optional_disk_arg} \
+          ${local_ssd_arg}  &
       sleep_for_api_ops
     done
   fi
   loginfo "Creating master instance: ${MASTER_HOSTNAME}"
   if (( ${USE_ATTACHED_PDS} )); then
-    optional_disk_arg="--disk=${MASTER_ATTACHED_PD},mode=rw"
+    optional_disk_arg="--disk name=${MASTER_ATTACHED_PD} mode=rw"
   fi
-  run_gcutil_cmd \
-      addinstance \
-      --machine_type=${GCE_MACHINE_TYPE} \
-      --service_account=default \
-      --image=${GCE_IMAGE} \
-      --network=${GCE_NETWORK} \
-      --service_account_scopes=${GCE_SERVICE_ACCOUNT_SCOPES} \
-      --persistent_boot_disk \
-      --external_ip_address=ephemeral \
-      ${optional_disk_arg} ${MASTER_HOSTNAME} &
+  run_gccompute_cmd \
+      "instances create" ${MASTER_HOSTNAME} \
+      --machine-type ${GCE_MACHINE_TYPE} \
+      --image ${GCE_IMAGE} \
+      --no-restart-on-failure \
+      --maintenance-policy "TERMINATE" \
+      --network ${GCE_NETWORK} \
+      --scopes ${GCE_SERVICE_ACCOUNT_SCOPES} \
+      ${optional_disk_arg}  &
   await_async_jobs 'addinstance'
 
   loginfo 'Instances all created. Entering polling loop to wait for ssh-ability'

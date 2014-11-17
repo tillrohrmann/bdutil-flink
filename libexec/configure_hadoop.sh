@@ -68,7 +68,7 @@ EOF
 
 # Place mapred temp directories on non-boot disks for the same reason as logs:
 # If disks are mounted use all of them for mapred local data
-MOUNTED_DISKS=($(find /mnt -maxdepth 1 -mindepth 1))
+MOUNTED_DISKS=($(find /mnt -maxdepth 1 -mindepth 1 -name "ed*"))
 if [[ ${#MOUNTED_DISKS[@]} -eq 0 ]]; then
   MOUNTED_DISKS=('')
 fi

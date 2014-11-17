@@ -30,7 +30,7 @@ if (( ${ENABLE_HDFS} )); then
   export HDFS_NAME_DIR=/hadoop/dfs/name
 
   # If disks are mounted use all of them for HDFS data
-  MOUNTED_DISKS=($(find /mnt -maxdepth 1 -mindepth 1))
+  MOUNTED_DISKS=($(find /mnt -maxdepth 1 -mindepth 1 -name "pd*"))
   if [[ ${#MOUNTED_DISKS[@]} -eq 0 ]]; then
     MOUNTED_DISKS=('')
   fi
