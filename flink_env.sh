@@ -1,9 +1,9 @@
 PROJECT="astral-sorter-757"
 GCE_ZONE="europe-west1-c"
 CONFIGBUCKET="flink-experiments"
-PREFIX="aljoscha-flink"
+PREFIX="till-flink"
 
-NUM_WORKERS=41
+NUM_WORKERS=42
 GCE_MACHINE_TYPE="n1-highmem-8"
 LOCAL_SSD_COUNT=1
 LOCAL_SSD_INTERFACE=NVME
