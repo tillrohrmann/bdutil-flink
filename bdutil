@@ -786,9 +786,11 @@ function create_cluster() {
       if (( ${USE_ATTACHED_PDS} )); then
         local optional_disk_arg="--disk name=${WORKER_ATTACHED_PDS[${i}]} mode=rw"
       fi
-      if (( ${LOCAL_SSD_COUNT} )); then
-        local local_ssd_arg="--local-ssd-count ${LOCAL_SSD_COUNT} --local-ssd-interface ${LOCAL_SSD_INTERFACE}"
-      fi
+      local local_ssd_arg=""
+      for ((ssd_i=0;ssd_i<${LOCAL_SSD_COUNT};ssd_i++))
+      do
+        local_ssd_arg=$local_ssd_arg" --local-ssd interface=${LOCAL_SSD_INTERFACE}"
+      done
       run_gccompute_cmd \
           "instances create" ${WORKERS[${i}]} \
           --machine-type ${GCE_MACHINE_TYPE} \
